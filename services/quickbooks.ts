@@ -21,9 +21,8 @@ export function initiateQuickBooksAuth() {
     redirect_uri: REDIRECT_URI,
     state: generateRandomState(), // For CSRF protection
   });
-  
   // Redirect to QuickBooks authorization page
-  window.location.href = `${authUrl}?${params.toString()}`;
+  return `${authUrl}?${params.toString()}`;
 }
 
 /**
