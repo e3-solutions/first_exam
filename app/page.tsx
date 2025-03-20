@@ -1,14 +1,17 @@
+"use client"
+
 // pages/index.tsx
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/router';
-import Head from 'next/head';
+import { useRouter, useSearchParams } from 'next/navigation';
 import ChatInterface from '../components/ChatInterface';
 import { QuickBooksAuth } from '../types';
-import { initiateQuickBooksAuth } from '../services/quickbooks.ts';
+import { initiateQuickBooksAuth } from '../services/quickbooks';
 
 export default function Home() {
   const [quickBooksAuth, setQuickBooksAuth] = useState<QuickBooksAuth | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+  const searchParams = useSearchParams();
   
   // Check for stored QuickBooks auth on page load
   useEffect(() => {
@@ -22,47 +25,54 @@ export default function Home() {
         }
       } catch (error) {
         console.error('Error parsing stored QuickBooks auth:', error);
+        setError('Error loading stored authentication');
       }
     }
   }, []);
   
   // Handle QuickBooks OAuth code in URL (after callback)
   useEffect(() => {
-    const { code, realmId, state } = router.query;
+    // Check pathname only after component mounts on client
+    const pathname = window.location.pathname;
+    console.log({pathname})
+    // Only process if we're on the callback page
     
-    if (code && realmId && typeof code === 'string' && typeof realmId === 'string') {
-      // This would typically be handled in an API route
-      // For the interview, we're doing it client-side for simplicity
-      const handleCallback = async () => {
-        try {
-          // This import is done dynamically to avoid circular dependencies
-          const { handleQuickBooksCallback } = await import('../services/quickbooks');
-          const auth = await handleQuickBooksCallback(code, realmId);
-          setQuickBooksAuth(auth);
-          
-          // Remove query params from URL for cleanliness
-          router.replace('/', undefined, { shallow: true });
-        } catch (error) {
-          console.error('Error handling QuickBooks callback:', error);
-        }
-      };
+    if (pathname === '/quickbooks/callback') {
+      const code = searchParams.get('code');
+      const realmId = searchParams.get('realmId');
       
-      handleCallback();
+      if (code && realmId) {
+        console.log('Received OAuth callback:', { code, realmId });
+        // Handle the OAuth callback here
+        const handleCallback = async () => {
+          try {
+            const { handleQuickBooksCallback } = await import('../services/quickbooks');
+            const auth = await handleQuickBooksCallback(code, realmId);
+            setQuickBooksAuth(auth);
+            setError(null);
+            // Clear the URL parameters by redirecting to home
+            router.replace('/');
+          } catch (error) {
+            console.error('Error handling QuickBooks callback:', error);
+            setError('Failed to authenticate with QuickBooks');
+          }
+        };
+        
+        handleCallback();
+      }
     }
-  }, [router.query, router]);
+  }, [searchParams, router]);
   
   const handleConnectQuickBooks = () => {
-    initiateQuickBooksAuth();
+    try {
+      initiateQuickBooksAuth();
+    } catch (error) {
+      setError('Failed to start QuickBooks authentication');
+    }
   };
   
   return (
     <div className="flex flex-col min-h-screen">
-      <Head>
-        <title>QuickBooks AI Chat</title>
-        <meta name="description" content="Chat with AI about your QuickBooks data" />
-        <link rel="icon" href="/favicon.ico" />
-      </Head>
-      
       <header className="bg-blue-600 text-white p-4">
         <div className="container mx-auto">
           <h1 className="text-2xl font-bold">QuickBooks AI Chat</h1>
@@ -70,6 +80,12 @@ export default function Home() {
       </header>
       
       <main className="flex-1 container mx-auto p-4">
+        {error && (
+          <div className="max-w-md mx-auto mb-4 p-4 bg-red-100 border border-red-400 text-red-700 rounded">
+            {error}
+          </div>
+        )}
+        
         {!quickBooksAuth ? (
           <div className="max-w-md mx-auto my-12 p-6 bg-white rounded-lg shadow-lg">
             <h2 className="text-xl font-semibold mb-4">Connect to QuickBooks</h2>
