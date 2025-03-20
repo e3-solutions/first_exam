@@ -2,28 +2,54 @@
 import axios from 'axios';
 import { QuickBooksAuth, Invoice } from '../types';
 
+// Debug: Log environment variables
+console.log('Environment Variables:', {
+  clientId: process.env.NEXT_PUBLIC_QUICKBOOKS_CLIENT_ID,
+  baseUrl: process.env.NEXT_PUBLIC_BASE_URL,
+});
+
+// Constants for OAuth
 const QB_CLIENT_ID = process.env.NEXT_PUBLIC_QUICKBOOKS_CLIENT_ID;
 const QB_CLIENT_SECRET = process.env.QUICKBOOKS_CLIENT_SECRET;
-const REDIRECT_URI = `${process.env.NEXT_PUBLIC_BASE_URL}/api/quickbooks/callback`;
+const BASE_URL = 'http://localhost:3000';
+// Using the verified working callback path
+const REDIRECT_URI = `${BASE_URL}/quickbooks/callback`;
+
+/**
+ * Validate required environment variables
+ */
+function validateConfig() {
+  console.log('Validating config with:', {
+    clientId: QB_CLIENT_ID,
+    redirectUri: REDIRECT_URI,
+    baseUrl: BASE_URL
+  });
+}
 
 /**
  * Initiate the QuickBooks OAuth flow
  */
 export function initiateQuickBooksAuth() {
+  console.log('\n=== QUICKBOOKS SETUP INSTRUCTIONS ===');
+  console.log('Register this EXACT redirect URI in Intuit Developer Portal:');
+  console.log(REDIRECT_URI);
+
   // QuickBooks OAuth 2.0 authorization URL
   const authUrl = 'https://appcenter.intuit.com/connect/oauth2';
   
   // Required parameters
-  const params = new URLSearchParams({
-    client_id: QB_CLIENT_ID!,
-    response_type: 'code',
-    scope: 'com.intuit.quickbooks.accounting',
-    redirect_uri: REDIRECT_URI,
-    state: generateRandomState(), // For CSRF protection
-  });
+  const params = new URLSearchParams();
+  params.append('client_id', QB_CLIENT_ID || '');
+  params.append('response_type', 'code');
+  params.append('scope', 'com.intuit.quickbooks.accounting');
+  params.append('redirect_uri', REDIRECT_URI);
+  params.append('state', generateRandomState());
+  
+  const finalUrl = `${authUrl}?${params.toString()}`;
+  console.log('\nRedirecting to:', finalUrl);
   
   // Redirect to QuickBooks authorization page
-  window.location.href = `${authUrl}?${params.toString()}`;
+  window.location.href = finalUrl;
 }
 
 /**
@@ -60,8 +86,7 @@ export async function handleQuickBooksCallback(code: string, realmId: string): P
     realmId,
   };
   
-  // Store auth in secure cookie or localStorage
-  // In a real app, you would securely store these tokens
+  // Store auth in localStorage
   localStorage.setItem('quickbooks_auth', JSON.stringify(auth));
   
   return auth;
@@ -109,35 +134,24 @@ export async function fetchInvoices(auth: QuickBooksAuth): Promise<Invoice[]> {
  */
 async function ensureValidToken(auth: QuickBooksAuth): Promise<QuickBooksAuth> {
   // Check if token is expired
-  if (new Date() >= auth.expiresAt) {
-    // Token is expired, refresh it
-    const tokenUrl = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer';
-    
-    const response = await axios.post(
-      tokenUrl,
-      new URLSearchParams({
-        grant_type: 'refresh_token',
-        refresh_token: auth.refreshToken,
-      }).toString(),
-      {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          Authorization: `Basic ${Buffer.from(`${QB_CLIENT_ID}:${QB_CLIENT_SECRET}`).toString('base64')}`,
-        },
-      }
-    );
-    
-    // Calculate new expiration
-    const expiresAt = new Date();
-    expiresAt.setSeconds(expiresAt.getSeconds() + response.data.expires_in);
-    
-    // Update auth object
-    const updatedAuth: QuickBooksAuth = {
-      accessToken: response.data.access_token,
-      refreshToken: response.data.refresh_token || auth.refreshToken,
-      expiresAt,
-      realmId: auth.realmId,
-    };
+  if (new Date() >= new Date(auth.expiresAt)) {
+    // Token is expired, use our API route to refresh it
+    const response = await fetch('/api/quickbooks/token/refresh', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        refreshToken: auth.refreshToken,
+        realmId: auth.realmId,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to refresh token');
+    }
+
+    const updatedAuth = await response.json();
     
     // Update stored auth
     localStorage.setItem('quickbooks_auth', JSON.stringify(updatedAuth));
